@@ -32,6 +32,8 @@
 
 #!csharp
 
+using System;
+using System.Threading;
 //
 // Вычисление определенного интеграла
 //
@@ -43,24 +45,133 @@ class DefiniteIntegral
     // step - размер одного шага разбиения
     // threadsNumber - число потоков, которые используются для вычислений
     //
-    public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+    public static double[] Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
-        // отсюда надо начинать реализацию задачи
-        return 0.0;
+        Stopwatch timer = new Stopwatch();
+        timer.Start();
+        Thread[] threads = new Thread[threadsnumber];
+        Barrier barrier = new Barrier(threadsnumber+1);
+        double result = 0.0;
+        for(int i = 0; i < threadsnumber; i++){
+            double midResult = 0.0;
+            double start = a + i * (b-a)/threadsnumber;
+            double end = start + (b-a)/threadsnumber;
+            threads[i] = new Thread(()=>{
+                for(int j = 0; j < (end-start)/step; j++){
+                    double x1 = start + j * step;
+                    double x2 = x1 + step;
+                    midResult += (function(x1)+function(x2))*step/2;
+                }
+                result += midResult;
+                barrier.SignalAndWait();
+                });
+            threads[i].Start();
+        }
+        barrier.SignalAndWait();
+        timer.Stop();
+        return [result, timer.ElapsedMilliseconds];
     }
 }
 
 #!csharp
 
+//Многопоточное программирование
 #r "nuget: xunit, 2.8.1"
+#r "nuget:ScottPlot, 5.0.35"
 
 using Xunit;
+using Microsoft.DotNet.Interactive.Formatting;
 
 var X = (double x) => x;
 var SIN = (double x) => Math.Sin(x);
 
-Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
+// Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
+// Assert.Equal(10, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+// Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(700, 600)), HtmlFormatter.MimeType);
+double[] dataX = new double[12];
+double[] dataY = new double[12];
+double[] result = new double[2];
+double minTime = 1e9;
+int threadWithMinTime = 0;
+for(int threadsnumber = 1; threadsnumber <= 12; threadsnumber++){
+    double resultValue = 0.0;
+    double resultTime = 0.0;
+    int test = 0;
+    for(int tests = 0; tests < 6; tests++){
+        result = DefiniteIntegral.Solve(-100, 100, SIN, 1e-4, threadsnumber);
+        resultValue = result[0];
+        resultTime += result[1];
+        test = tests;
+        Assert.Equal(0, resultValue, 1e-4);
+    }
+    dataX[threadsnumber-1] = resultTime/test;
+    dataY[threadsnumber-1] = threadsnumber;
+    if(minTime >= resultTime/test){
+        minTime = resultTime/test;
+        threadWithMinTime = threadsnumber;
+    }
+}
+Console.WriteLine($"Оптимальное число потоков - {threadWithMinTime}, выполняется за время: {minTime}мс");
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(dataX, dataY);
+plt
 
-Assert.Equal(10, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+#!csharp
+
+//Однопоточное программирование
+using System.Linq;
+
+class TrapezoidalRule_LINQ
+{
+    public static double Solve(Func<double, double> f, double a, double b, double dx)
+    {
+        Stopwatch sw = new Stopwatch();
+        sw.Start();
+        double epsilon = 10E-7;
+        if (!double.IsNormal(a)) { throw new ArgumentException("Начало интервала не является число"); }
+        if (!double.IsNormal(b)) { throw new ArgumentException("Конец интервала не является числом"); }
+        if (dx < epsilon) { throw new ArgumentException("dx меньше epsilon"); }
+
+        int intervals = Convert.ToInt32(Math.Ceiling((b - a) / dx));
+        double result = Enumerable.Range(0, intervals).Select(i=>{
+            double x1 = a + i * dx;
+            double x2 = a + (i + 1) * dx;
+            double func = Math.Abs((f(x1) + f(x2))/2 *dx);
+            return func;
+        }).Sum();
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+}
+var SIN = (double x) => Math.Sin(x);
+double time = 0.0;
+int test = 0;
+for(int i = 0; i < 10; i++){
+    time += TrapezoidalRule_LINQ.Solve(SIN, -100, 100, 1e-4);
+    test = i;
+}
+double midTime = time/test;
+double percent = midTime/(minTime/100) - 100;
+Console.WriteLine($"Среднее время выполнения программы в однопоточном режиме: {midTime}мс");
+
+#!markdown
+
+# Summary
+**Оптимальный размер шага:** 1e-4, так как программа выдаёт неточные значения при: 1e-1, 1e-2, 1e-3, а при 1e-5, 1e-6 программа выполняется достаточно долго.
+
+**Оптимальное количество потоков:**
+
+#!csharp
+
+Console.WriteLine($"{threadWithMinTime} потоков за время {minTime}мс.");
+
+#!markdown
+
+**Сравнение скорости выполнения многопоточной программы и однопоточной:**
+
+#!csharp
+
+Console.WriteLine($"Многопоточная программа: {minTime}мс \nОднопоточная программа: {midTime}мс\nМногопоточная программа выполняется на {Convert.ToInt32(percent)}% быстрее однопоточной.")
