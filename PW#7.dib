@@ -22,6 +22,94 @@ public interface ICommand
     void Execute();
 }
 
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using Xunit;
+
+public class HardStop: ICommand{
+    ServerThread thread;
+    public HardStop(ServerThread thread) {
+        this.thread = thread;
+    }
+    public void Execute() {
+        Assert.Equal(thread.GetThread(), Thread.CurrentThread);
+        thread.Stop();
+    }
+}
+public class SoftStop: ICommand{
+    ServerThread thread;
+    public SoftStop(ServerThread thread) {
+        this.thread = thread;
+    }
+    public void Execute() {
+        Assert.Equal(thread.GetThread(), Thread.CurrentThread);
+        thread.QueueIsEmpty();
+    }
+}
+public class ServerThread{
+    Thread thread;
+    bool isRunning = true;
+    bool queueIsEmpty = false;
+    ConcurrentQueue<ICommand> commands = new ConcurrentQueue<ICommand>();
+    public ServerThread(){
+        thread = new Thread(Run);
+        thread.Start();
+    }
+    public void EnqueueCommand(ICommand command){
+        commands.Enqueue(command);
+    }
+    public void Run(){
+        while(isRunning){
+            if(commands.TryDequeue(out ICommand command)){
+                command.Execute();
+            }
+            else if(queueIsEmpty && commands.IsEmpty){
+                isRunning = false;
+                break;
+            }
+        }
+    }
+    public Thread GetThread(){
+        return thread;
+    }
+    public void Stop(){
+        isRunning = false;
+    }
+    public void QueueIsEmpty(){
+        queueIsEmpty = true;
+    }
+}
+public class Imition : ICommand{
+    int id;
+    public Imition(int id){
+        this.id = id;
+    }
+    public void Execute(){
+        Console.WriteLine($"Выполнилась команда {id}");
+    }
+}
+
+#!csharp
+
+var serverThread = new ServerThread();
+for(int i = 0; i < 15; i++){
+    serverThread.EnqueueCommand(new Imition(i));
+    if(i == 4)serverThread.EnqueueCommand(new SoftStop(serverThread));
+}
+serverThread.GetThread().Join();
+Console.WriteLine("Выполнилась мягкая остановка.");
+serverThread = new ServerThread();
+for(int i = 0; i < 20; i++){
+    serverThread.EnqueueCommand(new Imition(i));
+    if(i == 4) serverThread.EnqueueCommand(new HardStop(serverThread));
+}
+serverThread.GetThread().Join();
+Console.WriteLine("Выполнилась жёсткая остановка.")
+
 #!markdown
 
 Классы, наследующие интерйес ICommand будем называть **Командами.**
