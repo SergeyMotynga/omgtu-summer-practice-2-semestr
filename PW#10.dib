@@ -36,3 +36,92 @@
 1. [Паттерн Сообщение](https://www.enterpriseintegrationpatterns.com/patterns/messaging/Message.html)
 2. [Паттерн Роутер - весь раздел про Роутеры](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRoutingIntro.html)
 3. [Обмен сообщеними](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageConstructionIntro.html)
+
+#!csharp
+
+public interface ICommand
+{
+    void Execute();
+    bool IsCompleted { get; }
+}
+
+#!csharp
+
+using System;
+using System.Threading;
+
+public class Message{
+    public int CommandId { get; }
+    public string Data { get; }
+    public Message(int commandId, string data){
+        CommandId = commandId;
+        Data = data;
+    }
+}
+public class LongRunningCommand : ICommand{
+    Queue<Message> _messages = new Queue<Message>();
+    int _id;
+    bool _isCompleted;
+    public LongRunningCommand(int id){
+        _id = id;
+    }
+    public void EnqueueMessageInCommand(Message messagge){
+        _messages.Enqueue(messagge);
+    }
+    public void Execute(){
+        if (_messages.Count != 0){
+            var message = _messages.Dequeue();
+            Console.WriteLine($"Команда {_id} обработала сообщение: {message.Data}");
+        }
+        else{
+            _isCompleted = true;
+        }
+    }
+    public bool IsCompleted => _isCompleted;
+}
+public class Router : ICommand{
+    Dictionary<int, Queue<Message>> _commandQueues = new Dictionary<int, Queue<Message>>();
+    Queue<Message> _globalQueue = new Queue<Message>();
+    bool _isCompleted;
+    public void RegisterCommand(int commandId, Queue<Message> commandQueue){
+        _commandQueues[commandId] = commandQueue;
+    }
+    public void EnqueueMessage(Message message){
+        _globalQueue.Enqueue(message);
+    }
+    public void Execute(){
+        if (_globalQueue.Count > 0){
+            var message = _globalQueue.Dequeue();
+                LongRunningCommand command = new LongRunningCommand(message.CommandId); 
+            if (_commandQueues.TryGetValue(message.CommandId, out Queue<Message> commandQueue)){
+                command.EnqueueMessageInCommand(message);
+                if(!command.IsCompleted){
+                    command.Execute();
+                }
+                commandQueue.Enqueue(message);
+            }
+            else{
+                Console.WriteLine($"Не удалось доставить сообщение '{message.Data}', неизвестная команда {message.CommandId}");
+            }
+        }
+        else{
+            _isCompleted = true;
+        }
+    }
+    public bool IsCompleted => _isCompleted;
+}
+
+#!csharp
+
+Router router = new Router();
+LongRunningCommand command1 = new LongRunningCommand(1);
+LongRunningCommand command2 = new LongRunningCommand(2);
+router.RegisterCommand(1, new Queue<Message>());
+router.RegisterCommand(2, new Queue<Message>());
+router.EnqueueMessage(new Message(1, "Для команды 1"));
+router.EnqueueMessage(new Message(2, "Для команды 2"));
+router.EnqueueMessage(new Message(2, "Для команды 2 2x"));
+router.EnqueueMessage(new Message(3, "Это для несуществующей команды"));
+while (!router.IsCompleted){
+    router.Execute();
+}
