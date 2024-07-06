@@ -41,6 +41,133 @@
 
 // здесь писать код
 
+#!csharp
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Diagnostics;
+
+public class Check{
+    public static double BlockingCollection(int elCount){
+        Stopwatch timer = new Stopwatch();
+        ManualResetEvent read = new ManualResetEvent(false);
+        ManualResetEvent write = new ManualResetEvent(false);
+        var collection = new BlockingCollection<int>();
+        Thread reader = new Thread(()=>{
+            read.Set();
+            write.WaitOne();
+            for(int i = 0; i < elCount; i++){
+                collection.Take();
+            }
+        });
+        Thread writer = new Thread(()=>{
+            read.WaitOne();
+            write.Set();
+            for(int i = 0; i < elCount; i++){
+                collection.Add(i);
+            }
+        });
+        timer.Start();
+        reader.Start();
+        writer.Start();
+        timer.Stop();
+        return timer.ElapsedMilliseconds;
+    }
+    public static double ConcurrentQueue(int elCount){
+        var queue = new ConcurrentQueue<int>();
+        ManualResetEvent read = new ManualResetEvent(false);
+        ManualResetEvent write = new ManualResetEvent(false);
+        Stopwatch timer = new Stopwatch();
+        Thread reader = new Thread(()=>{
+            read.Set();
+            write.WaitOne();
+            for(int i = 0; i < elCount; i++){
+                queue.TryDequeue(out _);
+            }
+        });
+        Thread writer = new Thread(()=>{
+            read.WaitOne();
+            write.Set();
+            for(int i = 0; i < elCount; i++){
+                queue.Enqueue(i);
+            }
+        });
+        timer.Start();
+        reader.Start();
+        writer.Start();
+        timer.Stop();
+        return timer.ElapsedMilliseconds;
+    }
+    public static double Queue(int elCount){
+        Queue queue = new Queue();
+        Stopwatch timer = new Stopwatch();
+        timer.Start();
+        for(int i = 0; i < elCount; i++){
+            queue.Enqueue(i);
+        }
+        for(int i = 0; i < elCount; i++){
+            queue.Dequeue();
+        }
+        timer.Stop();
+        return timer.ElapsedMilliseconds;
+    }
+}
+
+#!csharp
+
+#r "nuget:ScottPlot, 5.0.35"
+using Microsoft.DotNet.Interactive.Formatting;
+
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(700, 500)), HtmlFormatter.MimeType);
+int iterations = 10;
+int elCount = 1000000;
+double blockingCollection = 0;
+double concurrentQueue = 0;
+double queue = 0;
+ScottPlot.Plot pltBlock = new();
+ScottPlot.Plot pltConcurrent = new();
+ScottPlot.Plot pltQueue = new();
+for(int i = 1; i <= iterations; i++){
+    blockingCollection += Check.BlockingCollection(elCount);
+    pltBlock.Add.Scatter(i, blockingCollection/i);
+    concurrentQueue += Check.ConcurrentQueue(elCount);
+    pltConcurrent.Add.Scatter(i, concurrentQueue/i);
+    queue += Check.Queue(elCount);
+    pltQueue.Add.Scatter(i, queue/i);
+}
+
+#!csharp
+
+Console.WriteLine($"Общее время выполнения BlockingCollection: {blockingCollection}мс");
+pltBlock
+
+#!csharp
+
+Console.WriteLine($"Общее время выполнения ConcurrentQueue: {concurrentQueue}мс");
+pltConcurrent
+
+#!csharp
+
+Console.WriteLine($"Общее время выполнения Queue: {queue}мс");
+pltQueue
+
+#!csharp
+
+double bestResult = 0;
+string bestCollection = "";
+if(blockingCollection > concurrentQueue) {bestResult = concurrentQueue; bestCollection = "ConcurrentQueue";}
+else if(blockingCollection < concurrentQueue) {bestResult = blockingCollection; bestCollection = "BlockingCollection";}
+else if(blockingCollection == concurrentQueue) {bestResult = concurrentQueue; bestCollection = "BlockingCollection и ConcurrentQueue";}
+double avg = queue/bestResult*100-100;
+
 #!markdown
 
 ## Вывод
+**Самая эффективная потоко-безопасная коллекция:** В зависимости от результатов выполнения как коллекция BlockingCollection, так и коллекция ConcurrentQueue может быть ей.
+
+#!csharp
+
+Console.WriteLine($"Саммой эффективной потоко-безопасной коллекцией является: {bestCollection} со временем: {bestResult}мс, она на {avg}% эффективнее чем обычная очередь")
