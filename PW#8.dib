@@ -35,12 +35,154 @@
 
 #!csharp
 
+public interface ICommand
+{
+    bool isCompleted{get;}
+    void Execute();
+}
+
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using Xunit;
+
 public interface IScheduler
 {
-    bool HasCommand()
+    bool HasCommand();
     ICommand Select();
     void Add(ICommand cmd);
 }
+public class RoundRobin: IScheduler{
+    Queue<ICommand> commands = new Queue<ICommand>();
+    public bool HasCommand(){
+        return commands.Count > 0;
+    }
+    public ICommand Select(){
+        if(!HasCommand()){
+            return null;
+        }
+        ICommand cmd = commands.Dequeue();
+        if (!cmd.isCompleted)
+        {
+            commands.Enqueue(cmd);
+        }
+        return cmd;
+    }
+    public void Add(ICommand cmd){
+        commands.Enqueue(cmd);
+    }
+}
+public class HardStop: ICommand{
+    ServerThread thread;
+    public bool isCompleted{get;set;}
+    public HardStop(ServerThread thread) {
+        this.thread = thread;
+        isCompleted = false;
+    }
+    public void Execute() {
+        Assert.Equal(thread.GetThread(), Thread.CurrentThread);
+        thread.Stop();
+        isCompleted = true;
+    }
+}
+public class SoftStop: ICommand{
+    ServerThread thread;
+    public bool isCompleted{get;set;}
+    public SoftStop(ServerThread thread) {
+        this.thread = thread;
+        isCompleted = false;
+    }
+    public void Execute() {
+        Assert.Equal(thread.GetThread(), Thread.CurrentThread);
+        thread.QueueIsEmpty();
+        isCompleted = true;
+    }
+}
+public class ServerThread{
+    Thread thread;
+    bool isRunning = true;
+    bool queueIsEmpty = false;
+    ConcurrentQueue<ICommand> commands = new ConcurrentQueue<ICommand>();
+    IScheduler scheduler;
+    public ServerThread(IScheduler scheduler){
+        this.scheduler = scheduler;
+        thread = new Thread(Run);
+        thread.Start();
+    }
+    public void EnqueueCommand(ICommand command){
+        commands.Enqueue(command);
+    }
+    public void Run(){
+        while(isRunning){
+            ICommand command = null;
+            if(scheduler.HasCommand()){
+                command = scheduler.Select();
+            }
+            else if(commands.TryDequeue(out command)){
+                scheduler.Add(command);
+            }
+            if(command != null){
+                command.Execute();
+            }
+            else if(queueIsEmpty && commands.IsEmpty && !scheduler.HasCommand()){
+                isRunning = false;
+                break;
+            }
+        }
+    }
+    public Thread GetThread(){
+        return thread;
+    }
+    public void Stop(){
+        isRunning = false;
+    }
+    public void QueueIsEmpty(){
+        queueIsEmpty = true;
+    }
+}
+public class Imition : ICommand{
+    int id;
+    int count = 1;
+    int maxCount = 0;
+    public bool isCompleted{get; set; }
+    public Imition(int id, int maxCount){
+        this.id = id;
+        isCompleted = false;
+        this.maxCount = maxCount;
+    }
+    public void Execute(){
+        Console.WriteLine($"Выполнилась команда {id}, шаг {count}.");
+        count++;
+        if(count == maxCount){
+            isCompleted = true;
+        }
+    }
+}
+
+#!csharp
+
+IScheduler scheduler = new RoundRobin();
+var serverThread = new ServerThread(scheduler);
+for (int i = 1; i < 4; i++)
+{
+    serverThread.EnqueueCommand(new Imition(i,3));
+    if(i == 2) serverThread.EnqueueCommand(new SoftStop(serverThread));
+}
+for(int i = 4; i < 5; i++){
+    serverThread.EnqueueCommand(new Imition(i,2));
+}
+serverThread.GetThread().Join();
+Console.WriteLine("Выполнилась мягкая остановка.");
+serverThread = new ServerThread(scheduler);
+for(int i = 1; i < 4; i++){
+    serverThread.EnqueueCommand(new Imition(i,4));
+    if(i == 2) serverThread.EnqueueCommand(new HardStop(serverThread));
+}
+serverThread.GetThread().Join();
+Console.WriteLine("Выполнилась жёсткая остановка.");
 
 #!markdown
 
