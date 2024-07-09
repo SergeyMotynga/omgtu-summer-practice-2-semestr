@@ -55,12 +55,35 @@ class Message
 
 #!csharp
 
+using System;
 using System.Collections.Concurrent;
 
 var queue1 = new BlockingCollection<Message>(2); //очередь первого потока
 var queue2 = new BlockingCollection<Message>(2); //очередь второго потока
 
 // Здесь писать решение
+queue1.Add(new Message());
+Barrier barrier = new Barrier(2);
+Thread thread1 = new Thread(()=>{
+    for(int i = 0; i < 100; i++) {
+    var message = queue1.Take();
+    message.Handle();
+    queue2.Add(message);
+    barrier.SignalAndWait();
+    }
+});
+Thread thread2 = new Thread(()=>{
+    for(int i = 0; i < 100; i++) {
+    var message = queue2.Take();
+    message.Handle();
+    if(i != 99)queue1.Add(message);
+    barrier.SignalAndWait();
+    }
+});
+thread1.Start();
+thread2.Start();
+thread1.Join();
+thread2.Join();
 
 #!csharp
 
